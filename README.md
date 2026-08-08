@@ -2,6 +2,28 @@
 [HTML,CSS,JS,React] 💻💻 [Python,FastAPI,Docker] 💻💻 [ML, Model, EDA, CSV, AWS] 💻💻 AI-ML Application
 
 ### --------------------------------------------------------------------------------------------------------
+``
+
+``
+
+``
+
+``
+
+``
+
+``
+
+``
+
+
+``
+
+
+`
+uvicorn app.main:app --reload --port 8000
+`
+### --------------------------------------------------------------------------------------------------------
 
 ![alt text](image-0.png)
 
@@ -84,6 +106,42 @@ docker compose up --build
 
 ### --------------------------------------------------------------------------------------------------------
 
+![alt text](image-4.png)
+
+### --------------------------------------------------------------------------------------------------------
+
+**1. Interview talking point:**  I used synthetic data because it let me control ground truth and explain every column, but the schema and code work identically on the real Kaggle Telco dataset — I designed it to be a drop-in replacement.
+
+**ml/train.py**
+
+**1.Load** → pd.read_csv
+
+**2.EDA** → null counts, class balance, numeric summary (printed as a lightweight "report" — in a real job you'd also do this in a notebook with plots, but the pipeline itself must be script-based for reproducibility)
+
+**3.Cleaning** → coerce TotalCharges to numeric (it has blanks in the real dataset too — this is a famous real-world gotcha), drop the ID column
+
+**4.Feature Engineering** → tenure_bucket (binned), avg_monthly_spend (derived ratio), is_new_customer (flag), num_addon_services (count)
+Preprocessing pipeline → ColumnTransformer with SimpleImputer + StandardScaler for numeric columns and SimpleImputer + OneHotEncoder for categorical columns — bundled into one sklearn Pipeline so the exact same transform is applied at inference time with zero manual re-coding
+
+**Train/test split** → stratified (important: keeps class ratio equal in train/test since churn is a classification target)
+
+Two algorithms:
+**i.LogisticRegression** (baseline — linear, interpretable, fast, class_weight="balanced" to not ignore the minority class)
+
+**ii.RandomForestClassifier** (non-linear, captures feature interactions, usually stronger on tabular data)
+
+**5.Metrics** — accuracy, precision, recall, F1, ROC-AUC, confusion matrix. Why not just accuracy? For churn, missing a churner (false negative) is expensive (lost revenue) — recall matters. ROC-AUC is used for model selection because it's threshold-independent and robust when classes are roughly balanced-but-not-identical.
+
+**6.Model selection** → picks whichever model has the higher ROC-AUC automatically (max(results, key=...)) — not a hardcoded choice.
+
+**7.Save** → one joblib file containing the entire pipeline (preprocessing + model) + the feature column order + which model won. FastAPI only ever loads one artifact.
+
+
+### --------------------------------------------------------------------------------------------------------
+
+![alt text](image-5.png)
+
+### --------------------------------------------------------------------------------------------------------
 
 
 ### --------------------------------------------------------------------------------------------------------
@@ -95,4 +153,4 @@ docker compose up --build
 
 
 
-
+### --------------------------------------------------------------------------------------------------------

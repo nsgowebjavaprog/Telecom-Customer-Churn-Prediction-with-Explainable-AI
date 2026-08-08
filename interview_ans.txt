@@ -1,0 +1,9 @@
+"I built an end-to-end churn prediction system for a telecom use case — not just a model,
+but the full product path a startup would actually need. I did EDA and feature engineering,
+trained and compared two algorithms — logistic regression as an interpretable baseline 
+and random forest for non-linear patterns — and selected the better one using ROC-AUC
+because accuracy alone is misleading here. I wrapped the winning model in a FastAPI
+service with Pydantic validation and full CRUD over prediction history in SQLite,
+containerized it with Docker, and built a React frontend that supports both single predictions
+and CSV batch uploads with format validation — so a non-technical user could upload a spreadsheet
+and download predictions without touching code."

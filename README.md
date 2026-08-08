@@ -46,6 +46,40 @@ python -m venv churn_myenv
 ### --------------------------------------------------------------------------------------------------------
 
 
+#### 1. Generate the dataset
+`
+cd data
+pip install -r ../ml/requirements.txt
+python generate_data.py
+`
+#### 2. Train the model
+`
+cd ../ml
+python train.py
+`
+#### -> saves ml/models/churn_pipeline.joblib + metrics.json
+
+#### 3. Run the API
+`
+cd ../backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+`
+#### Swagger docs: http://localhost:8000/docs
+
+#### 4. Run the frontend (separate terminal)
+`
+cd ../frontend
+python -m http.server 3000
+`
+#### Open: http://localhost:3000
+`
+2. Run with Docker Compose (recommended for demos)
+bash
+docker compose up --build
+`
+#### Backend:  http://localhost:8000/docs
+#### Frontend: http://localhost:3000
 
 
 ### --------------------------------------------------------------------------------------------------------

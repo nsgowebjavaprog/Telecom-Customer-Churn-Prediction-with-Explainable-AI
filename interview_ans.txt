@@ -7,3 +7,80 @@ service with Pydantic validation and full CRUD over prediction history in SQLite
 containerized it with Docker, and built a React frontend that supports both single predictions
 and CSV batch uploads with format validation — so a non-technical user could upload a spreadsheet
 and download predictions without touching code."
+
+
+PART 6 — INTERVIEW Q&A BANK
+A. Machine Learning Fundamentals
+
+Q1. Why did you use both Logistic Regression and Random Forest instead of just picking one? 
+Because model choice should be evidence-based, not assumed. Logistic Regression gives an interpretable,
+fast baseline (coefficients show direction/magnitude of each feature's effect).
+Random Forest captures non-linear interactions (e.g., "fiber + month-to-month" combined effect) that logistic regression can't. 
+Comparing them with the same metrics tells you whether the added complexity of RF is actually worth it.
+
+
+Q2. Why ROC-AUC to pick the winner, not accuracy? Accuracy is misleading when class costs are asymmetric or classes aren't perfectly balanced — a model predicting "No churn" for everyone can still score high accuracy on a ~51/49 split, but that's useless for the business. ROC-AUC measures ranking quality across all thresholds, so it's a better signal for "is this model actually separating churners from non-churners" independent of the specific cutoff you'll deploy with.
+
+Q3. What is precision vs recall here, and which matters more for churn? Precision = of everyone we flagged as "will churn," how many actually churn. Recall = of everyone who actually churns, how many did we catch. For churn, missing an actual churner (low recall) is usually worse than a false alarm (low precision), because a false alarm just costs a retention email while a missed churner is lost revenue. That's why I used class_weight="balanced" to bias the model toward not ignoring the minority/costly class.
+
+Q4. Explain your feature engineering choices. tenure_bucket — captures non-linear relationship between tenure and churn (new customers churn a lot, this flattens after ~1 year — binning lets even linear models pick this up). avg_monthly_spend — normalizes TotalCharges by tenure, catching customers whose spend rate looks anomalous relative to their tenure. is_new_customer — explicit flag since new customers are disproportionately high risk. num_addon_services — aggregates 3 sparse yes/no columns into one signal of "how invested is this customer in our ecosystem."
+
+Q5. How do you handle the missing values in TotalCharges? pd.to_numeric(..., errors="coerce") turns unparseable strings into NaN, then the ColumnTransformer's SimpleImputer(strategy="median") fills numeric NaNs during the pipeline fit — importantly, median is computed only from training data and reused at inference, avoiding data leakage.
+
+Q6. What is data leakage and did you avoid it? Leakage = information from outside the training set (often the test set, or the future) sneaking into training. I avoided it by: (a) fitting all preprocessing (imputer, scaler, encoder) inside a Pipeline that's fit only on the training split, never on the full dataset before splitting; (b) using train_test_split(..., stratify=y) after feature engineering that only uses per-row information, not aggregate statistics computed across the whole dataset.
+
+Q7. Why OneHotEncoding instead of label encoding for categoricals? These are nominal categories with no ordinal relationship (e.g., PaymentMethod) — label encoding would falsely imply an order (e.g. "Bank transfer" > "Mailed check"), which would mislead a linear model in particular. handle_unknown="ignore" also protects inference from crashing if a new category appears that wasn't seen in training.
+
+Q8. How would you improve this model further? Hyperparameter tuning (GridSearchCV/Optuna) on the RF, try gradient boosting (XGBoost/LightGBM), add SHAP for explainability, engineer interaction features, try SMOTE for the minority class instead of only class_weight, and add more real-world features (support tickets, usage trends over time) if available.
+
+Q9. What's the difference between predict() and predict_proba() and why do you use the latter? predict() returns the hard 0/1 label using a default 0.5 threshold. predict_proba() returns the underlying probability — I use this because (a) it's needed for ROC-AUC, and (b) it lets the business choose their own risk threshold (e.g., only act on >70% probability) instead of being locked into 0.5, and it enables the 3-tier risk_level bucketing.
+
+Q10. How do you know your model isn't overfitting? Compared train vs held-out test metrics (not shown printed but easy to add), used a proper stratified train/test split, and capped Random Forest's max_depth=8 specifically to control variance/overfitting on a relatively small (5k row) dataset. Cross-validation would be the next step for a more rigorous estimate.
+
+B. FastAPI & Backend
+
+Q11. Why FastAPI over Flask/Django? Native async support, automatic OpenAPI/Swagger docs generation, and built-in request/response validation via Pydantic — which for an ML API means malformed input is rejected with a clear 422 error before it ever reaches the model (avoiding cryptic sklearn errors reaching the user).
+
+Q12. What does Pydantic actually do for you here? Type + constraint validation (Literal, Field(ge=, le=)), automatic JSON serialization/deserialization, auto-generates the OpenAPI schema so /docs is always accurate, and validates outgoing responses too so internal fields never leak.
+
+Q13. Explain FastAPI's dependency injection (Depends(get_db)). Depends() tells FastAPI to call get_db() before the endpoint runs and inject its return value as an argument. Since get_db is a generator using yield, FastAPI treats everything before yield as setup and everything after as teardown (a finally: db.close()), guaranteeing every request gets a fresh session that's always closed — even if the endpoint raises an exception.
+
+Q14. How does your API validate CSV uploads? Layered checks in /predict/batch: file extension check, parse-as-CSV check (catches malformed files), empty-dataframe check, required-columns check (diffs against a known schema list and reports exactly which columns are missing), then per-column numeric-type coercion checks. Any failure returns an HTTP 400 with a specific, actionable message rather than a generic 500.
+
+Q15. Explain the CRUD endpoints — what does each HTTP verb mean here? GET /customers/ (list, paginated via skip/limit, filterable) = Read many. GET /customers/{id} = Read one. PUT /customers/{id} = Update (partial, via exclude_unset=True so only provided fields change). DELETE /customers/{id} = Delete. Prediction creation happens implicitly as a side-effect of /predict/single and /predict/batch (logging every prediction), which is a deliberate design choice — the create endpoint is prediction-driven, not a raw manual insert.
+
+Q16. Why load the model at import time instead of inside each endpoint function? Loading a joblib/pickle model involves disk I/O and deserialization — doing that on every request would add significant, unnecessary latency and load. Loading once at module import (when the app starts) means every request just reuses the already-in-memory object.
+
+Q17. How do you prevent the API from crashing on a bad CSV upload? Every failure path raises HTTPException with a specific status code and message rather than letting an unhandled exception propagate — FastAPI converts unhandled exceptions to opaque 500s, which is bad UX and can leak stack traces; explicit validation with clear 400s is much better for API consumers (including the CSV-format check that runs before touching the model).
+
+C. Docker & Deployment
+
+Q18. Why Docker for an ML project? Reproducibility ("works on my machine" eliminated), environment isolation (exact Python + library versions baked into the image), and portability — the same image runs identically on a laptop, CI server, or cloud VM. For a startup, it also means a new team member (or interviewer!) can run the whole stack with one command.
+
+Q19. Explain your Dockerfile layer ordering. COPY requirements.txt + pip install happens before COPY app code — Docker caches each layer, and since dependencies change far less often than application code, this ordering means most rebuilds only re-run the fast "copy code" layer instead of reinstalling every package from scratch.
+
+Q20. What does docker-compose.yml do that docker run doesn't? Orchestrates multiple containers (backend + frontend here) as one unit — defines how they're built, which ports they expose, dependency order (depends_on), restart policy, and volumes — all with a single docker compose up instead of manually running/networking containers by hand.
+
+Q21. How would you move this to production (e.g. AWS/GCP)? Push images to a container registry (ECR/GCR), deploy via ECS/Cloud Run/ Kubernetes, put a managed Postgres behind the backend instead of SQLite, add a reverse proxy/HTTPS (via ALB or nginx+certbot), add environment-based secrets management, and add CI/CD (GitHub Actions) to build/push/deploy on merge to main.
+
+Q22. Why nginx for the frontend instead of just Python's http.server? http.server is fine for local demos but not production-grade — no gzip, no proper caching headers, single-threaded. nginx is a lightweight, battle-tested static file server that's the standard choice, and the image (nginx:alpine) is tiny.
+
+D. System Design / Trade-offs
+
+Q23. Why SQLite instead of Postgres/MySQL? Zero setup — no external DB server needed, so anyone (including an interviewer) can run the whole project with no extra infrastructure. SQLAlchemy abstracts the DB layer, so swapping the connection string to Postgres for production is a one-line change with no other code changes.
+
+Q24. How would you handle a CSV with 1 million rows? Synchronous request/response (as built) wouldn't scale — I'd move batch processing to a background job (Celery/RQ + Redis, or FastAPI BackgroundTasks for smaller scale), return a job ID immediately, and let the client poll a /jobs/{id} status endpoint or use webhooks/websockets for completion. I'd also chunk the CSV read (pd.read_csv(chunksize=...)) to avoid loading it all into memory at once.
+
+Q25. How would you version your ML model? Store each trained model with a version tag/timestamp (or use MLflow's model registry), keep the metrics.json per version for comparison, and let the API's /health endpoint report which model version is currently serving — so you can roll back instantly if a new model underperforms in production.
+
+Q26. What would you monitor once this is live? Prediction volume and latency, the distribution of risk_level outputs over time (sudden shifts can indicate data drift or an upstream data bug), and — once ground truth churn events are known weeks later — actual model performance (precision/recall) in production vs offline test metrics, to catch model decay.
+
+Q27. What's the biggest weakness of this project as-is, and how would you fix it if given more time? Be honest in interviews — good answers: (1) synthetic data, not real customer data — would validate on the real Kaggle Telco dataset or actual company data; (2) no authentication on the API — would add API keys/JWT before any real deployment; (3) SQLite won't handle concurrent writes at scale — would move to Postgres; (4) no automated tests — would add pytest unit tests for the FastAPI endpoints and the feature engineering function.
+
+E. Behavioral — How to Frame This Project
+
+Q28. "Tell me about a project you're proud of." Use the 60-second pitch from Part 5, then be ready to go deep on whichever layer they poke at (ML metrics, API design, or Docker) — interviewers often pick the thread that matches their own role (a data scientist will push on metrics; a backend engineer will push on API/DB design).
+
+Q29. "What was the hardest part?" Good honest answer: keeping the feature engineering identical between training (ml/train.py) and serving (model_utils.py) — this training/serving skew is a very real, very common production ML bug, and explicitly calling it out shows production maturity, not just modeling skill.
+
+Q30. "What would you do differently next time?" Write the feature engineering function once, import it in both train.py and model_utils.py (rather than duplicating the logic) to make skew impossible by construction — a good example of showing self-critical engineering judgment.
